@@ -22,6 +22,20 @@ class AntennaSimulation:
         self.min_current = 0.1
         self.max_current = 3.0
         self.frequency = 1.0
+        self.freq_unit = 'Hz'
+        self.antenna_type = 'Dipole'
+        self.freq_multipliers = {
+            'Hz': 1,
+            'kHz': 1e3,
+            'MHz': 1e6,
+            'GHz': 1e9
+        }
+        self.antenna_types = [
+            'Dipole',
+            'Monopole',
+            'Loop',
+            'Yagi'
+        ]
         self.time_step = 0.05
         self.t = 0.0
 
@@ -51,17 +65,89 @@ class AntennaSimulation:
         return np.array(points)
 
     def make_antenna(self, length):
+        if self.state.antenna_type == 'Dipole':
+            return self._make_dipole(length)
+        elif self.state.antenna_type == 'Monopole':
+            return self._make_monopole(length)
+        elif self.state.antenna_type == 'Loop':
+            return self._make_loop(length)
+        elif self.state.antenna_type == 'Yagi':
+            return self._make_yagi(length)
+        return self._make_dipole(length)  # default to dipole
+
+    def _make_dipole(self, length):
         body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length)
         base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
         top = pv.Sphere(center=(0, 0, length), radius=self.antenna_radius*1.5)
         return body + base + top
+
+    def _make_monopole(self, length):
+        body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length/2)
+        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=length/8, height=length/10)
+        top = pv.Sphere(center=(0, 0, length/2), radius=self.antenna_radius*1.5)
+        ground = pv.Disc(center=(0, 0, -length/20), normal=(0, 0, 1), radius=length/4)
+        return body + base + top + ground
+
+    def _make_loop(self, length):
+        radius = length / (2 * np.pi)
+        ring = pv.Circle(radius=radius, resolution=100)
+        tube = ring.tube(radius=self.antenna_radius)
+        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
+        return tube + base
+
+    def _make_yagi(self, length):
+        # Create main dipole
+        main_element = self._make_dipole(length)
+        
+        # Add director elements (shorter)
+        director1 = self._make_dipole(length * 0.8)
+        director1.translate((0, length/2, length/4))
+        
+        director2 = self._make_dipole(length * 0.7)
+        director2.translate((0, length, length/2))
+        
+        # Add reflector element (longer)
+        reflector = self._make_dipole(length * 1.2)
+        reflector.translate((0, -length/2, -length/4))
+        
+        return main_element + director1 + director2 + reflector
 
     def setup_plotter(self):
         self.plotter = pv.Plotter(off_screen=True)
         self.plotter.set_background("black")
         self.plotter.background_color = "black"
         self.plotter.renderer.SetBackground(0, 0, 0)
+        
+        # Add the antenna first to set bounds
         self.antenna_actor = self.plotter.add_mesh(self.make_antenna(self.antenna_length), color="silver", name="antenna")
+        
+        # Get bounds of the scene and set camera based on scene size
+        bounds = self.plotter.renderer.ComputeVisiblePropBounds()
+        diagonal = np.sqrt(np.sum((np.array(bounds[1::2]) - np.array(bounds[::2])) ** 2))
+        
+        # Set camera position and parameters
+        camera = self.plotter.renderer.GetActiveCamera()
+        camera.SetPosition(diagonal, diagonal, diagonal)
+        camera.SetFocalPoint(0, 0, 0)
+        camera.SetViewUp(0, 0, 1)
+        
+        # Set clipping range to constrain zoom
+        near_clip = diagonal * 0.1
+        far_clip = diagonal * 3.0
+        camera.SetClippingRange(near_clip, far_clip)
+        
+        # Set initial view angle
+        camera.Elevation(20)
+        camera.Azimuth(45)
+        camera.Zoom(1.2)
+        
+        # Reset the camera to apply settings
+        self.plotter.renderer.ResetCameraClippingRange()
+        self.plotter.reset_camera()
+
+    def get_actual_frequency(self):
+        """Convert the frequency value based on the selected unit"""
+        return self.state.frequency * self.freq_multipliers[self.state.freq_unit]
 
     def update_scene(self, **kwargs):
         self.t += self.time_step
@@ -69,11 +155,12 @@ class AntennaSimulation:
         self.plotter.add_mesh(self.make_antenna(self.state.antenna_length), color="silver", name="antenna")
         
         distances = np.linalg.norm(self.field_points, axis=1)
-        phase = 2 * np.pi * (self.state.frequency * self.t - distances / 2)
+        actual_freq = self.get_actual_frequency()
+        phase = 2 * np.pi * (actual_freq * self.t - distances / 2)
         
         # Calculate current amplitude based on min and max current
         current_range = self.state.max_current - self.state.min_current
-        current = self.state.min_current + (current_range * abs(np.sin(2 * np.pi * self.state.frequency * self.t)))
+        current = self.state.min_current + (current_range * abs(np.sin(2 * np.pi * actual_freq * self.t)))
         
         self.vectors[:, 0] = current * np.sin(phase) * self.field_points[:, 0] / distances
         self.vectors[:, 1] = current * np.sin(phase) * self.field_points[:, 1] / distances
@@ -123,16 +210,37 @@ class AntennaSimulation:
                 ):
                     html.Div("Simulation Parameters", classes="text-h6 mb-4")
                     
-                    vuetify.VSlider(
-                        v_model=("frequency", self.frequency),
-                        min=0.1,
-                        max=5.0,
-                        step=0.1,
-                        label="Frequency (Hz)",
-                        thumb_label="always",
-                        on_input=self.update_scene,
-                        classes="mb-4"
-                    )
+                    # Antenna Type Selection
+                    with vuetify.VRow(classes="mb-4"):
+                        with vuetify.VCol(cols=12):
+                            vuetify.VSelect(
+                                v_model=("antenna_type", self.antenna_type),
+                                items=self.antenna_types,
+                                label="Antenna Type",
+                                on_change=self.update_scene,
+                                hide_details=True,
+                            )
+                    
+                    # Frequency controls with unit selection
+                    with vuetify.VRow(classes="mb-4"):
+                        with vuetify.VCol(cols=8):
+                            vuetify.VSlider(
+                                v_model=("frequency", self.frequency),
+                                min=1,
+                                max=1000,
+                                step=1,
+                                label="Frequency",
+                                thumb_label="always",
+                                on_input=self.update_scene,
+                            )
+                        with vuetify.VCol(cols=4):
+                            vuetify.VSelect(
+                                v_model=("freq_unit", self.freq_unit),
+                                items=list(self.freq_multipliers.keys()),
+                                label="Unit",
+                                on_change=self.update_scene,
+                                hide_details=True,
+                            )
                     
                     vuetify.VSlider(
                         v_model=("max_current", self.max_current),
@@ -175,8 +283,12 @@ class AntennaSimulation:
                         ref="view",
                         camera_parallel_projection=False,
                         interactor_settings={
-                            "max_distance": 5.0,
-                            "min_distance": 0.1
+                            "max_distance": 1.0,  # Reduced max zoom out distance
+                            "min_distance": 0.5,  # Increased min zoom in distance
+                            "interaction": 2,     # Disable camera movement
+                            "prevent_wheel": True, # Prevent zooming
+                            "prevent_pan": True,   # Prevent panning
+                            "prevent_rotation": True  # Prevent rotation
                         }
                     )
 
@@ -185,6 +297,7 @@ class AntennaSimulation:
         self.state.min_current = self.min_current
         self.state.max_current = self.max_current
         self.state.frequency = self.frequency
+        self.state.freq_unit = self.freq_unit
 
     def start(self, show_server_only=False):
         try:
