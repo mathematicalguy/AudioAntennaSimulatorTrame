@@ -3,6 +3,7 @@ import pyvista as pv
 from trame.app import get_server
 from trame.ui.vuetify import SinglePageLayout
 from trame.widgets import vtk, vuetify, html
+from audio_file_upload import AudioUploaderComponent
 
 class AntennaSimulation:
     def __init__(self):
@@ -44,6 +45,9 @@ class AntennaSimulation:
         self.vectors = np.zeros_like(self.field_points)
         self.field_data = pv.PolyData(self.field_points)
         self.field_data["E"] = self.vectors
+
+        # Initialize audio uploader
+        self.audio_uploader = AudioUploaderComponent(self.server)
 
         # Setup plotter
         self.setup_plotter()
@@ -274,6 +278,12 @@ class AntennaSimulation:
                         on_input=self.update_scene,
                         classes="mb-4"
                     )
+
+                    # Add divider before audio upload section
+                    vuetify.VDivider(classes="mb-4")
+                    
+                    # Add the audio upload component
+                    self.audio_uploader.get_upload_widget()
 
             # Main content area
             with layout.content:
