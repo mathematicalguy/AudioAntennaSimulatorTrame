@@ -192,11 +192,60 @@ class AntennaSimulation:
                 self.update_scene()
                 self.ctrl.tick_period = 50
                 self.ctrl.tick = True
+        
+        @self.state.change("uploaded_file")
+        def on_file_uploaded(uploaded_file=None, **kwargs):
+            if uploaded_file:
+                print(f"Processing audio file: {uploaded_file}")
+                self.process_audio_file(uploaded_file)
 
         @self.ctrl.trigger("tick")
         def on_tick():
             if self.ctrl.tick:
                 self.update_scene()
+    
+    def process_audio_file(self, file_path):
+        """Process the uploaded audio file and update simulation parameters"""
+        try:
+            import librosa
+            import numpy as np
+            
+            # Load the audio file
+            y, sr = librosa.load(file_path, sr=None)
+            
+            # Extract frequency information
+            D = np.abs(librosa.stft(y))
+            freqs = librosa.fft_frequencies(sr=sr)
+            times = librosa.times_like(D, sr=sr)
+            
+            # Find dominant frequency
+            dominant_freq_index = np.argmax(np.mean(D, axis=1))
+            dominant_freq = freqs[dominant_freq_index]
+            
+            # Scale to reasonable range for visualization
+            scaled_freq = min(1000, max(1, dominant_freq / 100))
+            
+            # Update simulation parameters based on audio
+            self.state.frequency = scaled_freq
+            
+            # Set appropriate frequency unit
+            if scaled_freq < 1:
+                self.state.freq_unit = 'Hz'
+            elif scaled_freq < 1000:
+                self.state.freq_unit = 'Hz'
+            else:
+                self.state.freq_unit = 'kHz'
+                self.state.frequency = scaled_freq / 1000
+                
+            # Store audio data for possible animation
+            self.audio_data = y
+            self.audio_sr = sr
+            
+            print(f"Audio processed: Dominant frequency = {dominant_freq} Hz")
+            
+        except Exception as e:
+            print(f"Error processing audio file: {str(e)}")
+            self.state.upload_status = f"Error processing audio: {str(e)}"
 
     def setup_ui(self):
         with SinglePageLayout(self.server) as layout:
@@ -282,8 +331,9 @@ class AntennaSimulation:
                     # Add divider before audio upload section
                     vuetify.VDivider(classes="mb-4")
                     
-                    # Add the audio upload component
-                    self.audio_uploader.get_upload_widget()
+                    # Include audio uploader component directly in the layout
+                    with self.audio_uploader.get_upload_widget():
+                        pass
 
             # Main content area
             with layout.content:
