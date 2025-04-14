@@ -1,20 +1,100 @@
+# --------------------------------------
 # Python
+# --------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+
+# Virtual environments
+.venv/
+env/
 venv/
 ENV/
+env.bak/
+venv.bak/
+
+# Editable installs
+*.egg
+*.egg-info/
+.eggs/
+
+# Distribution / packaging
+build/
+dist/
+*.spec
+MANIFEST
+
+# Jupyter
+.ipynb_checkpoints
+
+# Logs and output
+*.log
+*.out
+test-results/
+coverage.xml
+htmlcov/
+.coverage
+.cache/
+.pytest_cache/
+
+# MyPy, Pyre, and typing
+.mypy_cache/
+.pyre/
+
+# dotenv
 .env
+.env.*
 
-# Project specific
-uploads/
-*.wav
-*.mp3
-
-# IDE
+# VSCode
 .vscode/
+
+# PyCharm
 .idea/
 
-# OS specific
+# Poetry
+poetry.lock
+# Uncomment if Poetry creates local venv
+# .venv/
+
+# Pipenv
+Pipfile.lock
+
+# macOS
 .DS_Store
-Thumbs.db
+
+# Pre-commit
+.pre-commit-config.yaml
+.pre-commit/
+
+# Agent SDK cache (future-proofing)
+agents_cache/
+
+# --------------------------------------
+# Docker
+# --------------------------------------
+# Ignore Docker artifacts
+*.tar
+*.img
+*.bak
+*.pid
+
+# Docker Compose override files (local-only configs)
+docker-compose.override.yml
+
+# Named volumes (if used and stored locally)
+volumes/
+
+# Docker environment override files
+.env.docker
+.env.local
+.env.dev
+
+# --------------------------------------
+# Optional: pyenv & direnv
+# --------------------------------------
+.python-version
+.direnv/
+
+
+uploads/

@@ -2,71 +2,154 @@ import os
 from pathlib import Path
 from trame.widgets import vuetify, html
 import base64
+import shutil
 
 class AudioUploaderComponent:
     def __init__(self, server):
         self.server = server
+        
+        # Create the upload directory if it doesn't exist
         self.upload_dir = Path(__file__).parent.parent.parent / 'uploads'
-        self.upload_dir.mkdir(exist_ok=True)
+        try:
+            self.upload_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Test write permissions by creating a test file
+            test_file = self.upload_dir / '.test_write'
+            test_file.touch()
+            test_file.unlink()
+            
+            print(f"Upload directory ready: {self.upload_dir}")
+        except Exception as e:
+            print(f"Warning: Could not create or access upload directory: {str(e)}")
+            # Fall back to temp directory
+            self.upload_dir = Path(os.path.join(os.path.expanduser('~'), 'temp_uploads'))
+            self.upload_dir.mkdir(exist_ok=True, parents=True)
+            print(f"Using fallback directory: {self.upload_dir}")
         
         # Initialize state
         self.server.state.uploaded_file = None
         self.server.state.upload_status = ""
+        self.server.state.should_process = False
         
-        # Setup controllers
-        self.setup_controllers()
+        # Watch for the trigger variable
+        @self.server.state.change("should_process")
+        def on_should_process(should_process, **kwargs):
+            if should_process:
+                # Reset the trigger immediately
+                self.server.state.should_process = False
+                
+                # Process the file upload
+                self.process_file_upload()
+        
+        # Register direct method to handle file uploads
+        @self.server.controller.set("process_file")
+        def process_file():
+            """Process a file upload that's been stored in the window global variable"""
+            self.process_file_upload()
     
-    def setup_controllers(self):
-        @self.server.controller.set("handle_file_upload")
-        def handle_file_upload(file_content, file_name):
-            try:
-                if not file_name.lower().endswith('.mp3'):
-                    self.server.state.upload_status = "Error: Only MP3 files are allowed"
-                    return
-                
-                # Decode base64 content
-                content = base64.b64decode(file_content.split(',')[1])
-                
-                # Save file
-                file_path = self.upload_dir / file_name
-                with open(file_path, 'wb') as f:
-                    f.write(content)
-                
-                self.server.state.uploaded_file = str(file_path)
-                self.server.state.upload_status = f"Successfully uploaded {file_name}"
-                
-            except Exception as e:
-                self.server.state.upload_status = f"Error uploading file: {str(e)}"
+    def process_file_upload(self):
+        """Process a file upload using the temp state variables"""
+        print("\n===== PROCESSING AUDIO FILE (SERVER DIRECT) =====")
+        filename = self.server.state.temp_filename
+        base64_data = self.server.state.temp_base64data
+        
+        print(f"Received filename: {filename}")
+        if base64_data:
+            print(f"Received base64 data length: {len(base64_data)}")
+        else:
+            print("No base64 data received")
+            
+        if not filename or not base64_data:
+            self.server.state.upload_status = "Error: Missing file data"
+            return
+        
+        if not filename.lower().endswith('.mp3'):
+            self.server.state.upload_status = "Error: Only MP3 files are allowed"
+            return
+        
+        try:
+            # Decode base64 content
+            content = base64.b64decode(base64_data.split(',')[1])
+            print(f"Successfully decoded base64 content, size: {len(content)} bytes")
+            
+            # Save file
+            file_path = self.upload_dir / filename
+            with open(file_path, 'wb') as f:
+                f.write(content)
+            
+            print(f"File saved to {file_path}")
+            
+            # Update state
+            self.server.state.uploaded_file = str(file_path)
+            self.server.state.upload_status = f"Successfully uploaded {filename}"
+            
+        except Exception as e:
+            self.server.state.upload_status = f"Error processing file: {str(e)}"
+            print(f"Error: {str(e)}")
     
     def get_upload_widget(self):
         with vuetify.VCard(classes="pa-4") as card:
             html.Div("Audio File Upload", classes="text-h6 mb-4")
             
-            vuetify.VFileInput(
-                v_model=("files", None),
-                label="Upload MP3 File",
-                accept=".mp3",
-                show_size=True,
-                truncate_length=25,
-                append_icon="mdi-upload",
-                classes="mb-2",
+            # State variables to store file data
+            vuetify.VTextField(
+                v_model=("temp_filename", ""),
+                style="display: none;"
             )
             
-            with vuetify.VRow(classes="mb-2"):
-                with vuetify.VCol(cols=12):
-                    vuetify.VBtn(
-                        "Upload",
-                        block=True,
-                        color="primary",
-                        click="""
-                        if (files) {
-                            const reader = new FileReader();
-                            reader.onload = (e) => {
-                                handle_file_upload(e.target.result, files.name);
-                            };
-                            reader.readAsDataURL(files);
-                        }
-                        """,
-                    )
+            vuetify.VTextField(
+                v_model=("temp_base64data", ""),
+                style="display: none;"
+            )
             
-            html.Div("{{ upload_status }}", classes="text-body-2")
+            vuetify.VTextField(
+                v_model=("should_process", False),
+                style="display: none;"
+            )
+            
+            # Use a standard Vuetify file input
+            vuetify.VFileInput(
+                v_model=("file_input", None),
+                label="Select MP3 File",
+                accept=".mp3",
+                truncate_length=25,
+                show_size=True,
+                persistent_hint=True,
+                hint="Select an MP3 file to upload",
+                classes="mb-4",
+            )
+            
+            # Upload button
+            vuetify.VBtn(
+                "Upload File",
+                color="primary",
+                block=True,
+                classes="mb-4",
+                click="""
+                if (!file_input) {
+                    // Show an error message if no file is selected
+                    upload_status = 'Error: Please select a file first';
+                    return;
+                }
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    temp_filename = file_input.name;
+                    temp_base64data = e.target.result;
+                    should_process = true;
+                };
+                reader.readAsDataURL(file_input);
+                """
+            )
+            
+            # Status display
+            vuetify.VAlert(
+                "{{ upload_status }}",
+                classes="text-body-2",
+                v_if="upload_status",
+                type=("upload_status.includes('Error') ? 'error' : 'success'"),
+                dense=True,
+                outlined=True
+            )
+        
+        return card

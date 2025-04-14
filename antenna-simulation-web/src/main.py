@@ -1,18 +1,15 @@
 from antenna_sim import AntennaSimulation
-from audio_file_upload import AudioUploaderComponent
+from trame.ui.vuetify import SinglePageWithDrawerLayout
 import sys
 
 class MainApplication:
     def __init__(self):
         self.simulation = AntennaSimulation()
         
-        # Initialize the audio uploader component
-        self.audio_uploader = AudioUploaderComponent(self.simulation.server)
-        
     def setup_ui(self):
         with SinglePageWithDrawerLayout(self.simulation.server) as layout:
-            # Add the upload widget wherever you want it in your layout
-            layout.content.add(self.audio_uploader.get_upload_widget())
+            # The audio uploader is already integrated in the AntennaSimulation class
+            pass
             
 def main():
     app = MainApplication()
