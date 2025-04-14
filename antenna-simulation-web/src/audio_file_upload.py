@@ -3,6 +3,11 @@ from pathlib import Path
 from trame.widgets import vuetify, html
 import base64
 import shutil
+import sys
+
+# Add parent directory to path so we can import audiograph_maker
+sys.path.append(str(Path(__file__).parent.parent))
+from audiograph_maker import generate_graph_for_audio
 
 class AudioUploaderComponent:
     def __init__(self, server):
@@ -30,6 +35,7 @@ class AudioUploaderComponent:
         self.server.state.uploaded_file = None
         self.server.state.upload_status = ""
         self.server.state.should_process = False
+        self.server.state.audio_graph = None
         
         # Watch for the trigger variable
         @self.server.state.change("should_process")
@@ -83,6 +89,17 @@ class AudioUploaderComponent:
             self.server.state.uploaded_file = str(file_path)
             self.server.state.upload_status = f"Successfully uploaded {filename}"
             
+            # Generate audio graph after successful upload
+            try:
+                graph_path = generate_graph_for_audio(file_path)
+                if graph_path:
+                    self.server.state.audio_graph = str(graph_path)
+                    self.server.state.upload_status += f" and created audio graph"
+                    print(f"Generated audio graph: {graph_path}")
+            except Exception as e:
+                print(f"Error generating audio graph: {str(e)}")
+                # Don't fail the whole upload if graph generation fails
+                
         except Exception as e:
             self.server.state.upload_status = f"Error processing file: {str(e)}"
             print(f"Error: {str(e)}")
@@ -150,6 +167,16 @@ class AudioUploaderComponent:
                 type=("upload_status.includes('Error') ? 'error' : 'success'"),
                 dense=True,
                 outlined=True
+            )
+            
+            # Show audio graph if available
+            html.Div(
+                v_if="audio_graph",
+                classes="mt-4 text-center"
+            ).add_child(
+                html.Img("{{ audio_graph }}", 
+                         style="max-width: 100%; height: auto;",
+                         v_if="audio_graph")
             )
         
         return card
