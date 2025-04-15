@@ -67,24 +67,25 @@ class AntennaSimulator:
         return self._make_dipole(length)  # default to dipole
 
     def _make_dipole(self, length):
-        body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
+        body = pv.Cylinder(center=(0, 0, length/2), direction=(0, 0, 1), radius=self.antenna_radius, height=length)
+        # Place the sphere at the top end of the rod
         top = pv.Sphere(center=(0, 0, length), radius=self.antenna_radius*1.5)
-        return body + base + top
+        # Remove the base (no extra cylinder at the bottom)
+        return body + top
 
     def _make_monopole(self, length):
-        body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length/2)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=length/8, height=length/10)
+        body = pv.Cylinder(center=(0, 0, length/4), direction=(0, 0, 1), radius=self.antenna_radius, height=length/2)
+        # Place the sphere at the top end of the rod
         top = pv.Sphere(center=(0, 0, length/2), radius=self.antenna_radius*1.5)
-        ground = pv.Disc(center=(0, 0, -length/20), normal=(0, 0, 1), inner=0, outer=length/4)
-        return body + base + top + ground
+        # Remove the base and ground disc (no hexagon)
+        return body + top
 
     def _make_loop(self, length):
         radius = length / (2 * np.pi)
         ring = pv.Circle(radius=radius, resolution=100)
         tube = ring.tube(radius=self.antenna_radius)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
-        return tube + base
+        # Remove the base (no disc or cylinder)
+        return tube
 
     def _make_yagi(self, length):
         # Create main dipole
