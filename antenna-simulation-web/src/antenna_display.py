@@ -4,6 +4,7 @@ from trame.app import get_server
 from trame.ui.vuetify import SinglePageLayout
 from trame.widgets import vtk, vuetify, html
 from audio_file_upload import AudioUploaderComponent
+from antenna_simulator import AntennaSimulator
 
 class AntennaSimulation:
     def __init__(self):
@@ -16,36 +17,9 @@ class AntennaSimulation:
         )
         self.state, self.ctrl = self.server.state, self.server.controller
 
-        # Simulation Parameters
-        self.antenna_length = 1.0
-        self.antenna_radius = 0.02
-        self.current_amplitude = 1.0
-        self.min_current = 0.1
-        self.max_current = 3.0
-        self.frequency = 1.0
-        self.freq_unit = 'Hz'
-        self.antenna_type = 'Dipole'
-        self.freq_multipliers = {
-            'Hz': 1,
-            'kHz': 1e3,
-            'MHz': 1e6,
-            'GHz': 1e9
-        }
-        self.antenna_types = [
-            'Dipole',
-            'Monopole',
-            'Loop',
-            'Yagi'
-        ]
-        self.time_step = 0.05
-        self.t = 0.0
-
-        # Initialize simulation components
-        self.field_points = self.generate_field_points()
-        self.vectors = np.zeros_like(self.field_points)
-        self.field_data = pv.PolyData(self.field_points)
-        self.field_data["E"] = self.vectors
-
+        # Create simulator instance
+        self.simulator = AntennaSimulator()
+        
         # Initialize audio uploader
         self.audio_uploader = AudioUploaderComponent(self.server)
 
@@ -54,68 +28,6 @@ class AntennaSimulation:
         self.setup_ui()
         self.setup_controllers()
 
-    def generate_field_points(self):
-        phi = np.linspace(0, 2*np.pi, 30)
-        theta = np.linspace(0, np.pi, 15)
-        r = np.linspace(0.2, 2.0, 10)
-        points = []
-        for ri in r:
-            for ti in theta:
-                for pi in phi:
-                    x = ri * np.sin(ti) * np.cos(pi)
-                    y = ri * np.sin(ti) * np.sin(pi)
-                    z = ri * np.cos(ti)
-                    points.append([x, y, z])
-        return np.array(points)
-
-    def make_antenna(self, length):
-        if self.state.antenna_type == 'Dipole':
-            return self._make_dipole(length)
-        elif self.state.antenna_type == 'Monopole':
-            return self._make_monopole(length)
-        elif self.state.antenna_type == 'Loop':
-            return self._make_loop(length)
-        elif self.state.antenna_type == 'Yagi':
-            return self._make_yagi(length)
-        return self._make_dipole(length)  # default to dipole
-
-    def _make_dipole(self, length):
-        body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
-        top = pv.Sphere(center=(0, 0, length), radius=self.antenna_radius*1.5)
-        return body + base + top
-
-    def _make_monopole(self, length):
-        body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length/2)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=length/8, height=length/10)
-        top = pv.Sphere(center=(0, 0, length/2), radius=self.antenna_radius*1.5)
-        ground = pv.Disc(center=(0, 0, -length/20), normal=(0, 0, 1), radius=length/4)
-        return body + base + top + ground
-
-    def _make_loop(self, length):
-        radius = length / (2 * np.pi)
-        ring = pv.Circle(radius=radius, resolution=100)
-        tube = ring.tube(radius=self.antenna_radius)
-        base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=self.antenna_radius*3, height=length/10)
-        return tube + base
-
-    def _make_yagi(self, length):
-        # Create main dipole
-        main_element = self._make_dipole(length)
-        
-        # Add director elements (shorter)
-        director1 = self._make_dipole(length * 0.8)
-        director1.translate((0, length/2, length/4))
-        
-        director2 = self._make_dipole(length * 0.7)
-        director2.translate((0, length, length/2))
-        
-        # Add reflector element (longer)
-        reflector = self._make_dipole(length * 1.2)
-        reflector.translate((0, -length/2, -length/4))
-        
-        return main_element + director1 + director2 + reflector
-
     def setup_plotter(self):
         self.plotter = pv.Plotter(off_screen=True)
         self.plotter.set_background("black")
@@ -123,7 +35,7 @@ class AntennaSimulation:
         self.plotter.renderer.SetBackground(0, 0, 0)
         
         # Add the antenna first to set bounds
-        self.antenna_actor = self.plotter.add_mesh(self.make_antenna(self.antenna_length), color="silver", name="antenna")
+        self.antenna_actor = self.plotter.add_mesh(self.simulator.antenna_mesh, color="silver", name="antenna")
         
         # Get bounds of the scene and set camera based on scene size
         bounds = self.plotter.renderer.ComputeVisiblePropBounds()
@@ -149,31 +61,25 @@ class AntennaSimulation:
         self.plotter.renderer.ResetCameraClippingRange()
         self.plotter.reset_camera()
 
-    def get_actual_frequency(self):
-        """Convert the frequency value based on the selected unit"""
-        return self.state.frequency * self.freq_multipliers[self.state.freq_unit]
-
     def update_scene(self, **kwargs):
-        self.t += self.time_step
+        # Update simulator parameters
+        params = {
+            'antenna_length': self.state.antenna_length,
+            'min_current': self.state.min_current,
+            'max_current': self.state.max_current,
+            'frequency': self.state.frequency,
+            'freq_unit': self.state.freq_unit,
+            'antenna_type': self.state.antenna_type
+        }
+        
+        # Run simulation update
+        sim_results = self.simulator.update_simulation(**params)
+        
+        # Update visualization
         self.plotter.remove_actor("antenna")
-        self.plotter.add_mesh(self.make_antenna(self.state.antenna_length), color="silver", name="antenna")
+        self.plotter.add_mesh(sim_results['antenna_mesh'], color="silver", name="antenna")
         
-        distances = np.linalg.norm(self.field_points, axis=1)
-        actual_freq = self.get_actual_frequency()
-        phase = 2 * np.pi * (actual_freq * self.t - distances / 2)
-        
-        # Calculate current amplitude based on min and max current
-        current_range = self.state.max_current - self.state.min_current
-        current = self.state.min_current + (current_range * abs(np.sin(2 * np.pi * actual_freq * self.t)))
-        
-        self.vectors[:, 0] = current * np.sin(phase) * self.field_points[:, 0] / distances
-        self.vectors[:, 1] = current * np.sin(phase) * self.field_points[:, 1] / distances
-        self.vectors[:, 2] = current * np.cos(phase) * np.cos(np.arctan2(distances, self.field_points[:, 2]))
-
-        intensities = np.linalg.norm(self.vectors, axis=1)
-        self.field_data["E"] = self.vectors
-        self.field_data["intensity"] = intensities
-        glyphs = self.field_data.glyph(orient="E", scale="intensity", factor=0.1)
+        glyphs = sim_results['field_data'].glyph(orient="E", scale="intensity", factor=0.1)
         
         self.plotter.remove_actor("field")
         self.plotter.add_mesh(glyphs, scalars="intensity", cmap="plasma", name="field", opacity=0.8)
@@ -267,8 +173,8 @@ class AntennaSimulation:
                     with vuetify.VRow(classes="mb-4"):
                         with vuetify.VCol(cols=12):
                             vuetify.VSelect(
-                                v_model=("antenna_type", self.antenna_type),
-                                items=self.antenna_types,
+                                v_model=("antenna_type", self.simulator.antenna_type),
+                                items=self.simulator.antenna_types,
                                 label="Antenna Type",
                                 on_change=self.update_scene,
                                 hide_details=True,
@@ -278,7 +184,7 @@ class AntennaSimulation:
                     with vuetify.VRow(classes="mb-4"):
                         with vuetify.VCol(cols=8):
                             vuetify.VSlider(
-                                v_model=("frequency", self.frequency),
+                                v_model=("frequency", self.simulator.frequency),
                                 min=1,
                                 max=1000,
                                 step=1,
@@ -288,15 +194,15 @@ class AntennaSimulation:
                             )
                         with vuetify.VCol(cols=4):
                             vuetify.VSelect(
-                                v_model=("freq_unit", self.freq_unit),
-                                items=list(self.freq_multipliers.keys()),
+                                v_model=("freq_unit", self.simulator.freq_unit),
+                                items=list(self.simulator.freq_multipliers.keys()),
                                 label="Unit",
                                 on_change=self.update_scene,
                                 hide_details=True,
                             )
                     
                     vuetify.VSlider(
-                        v_model=("max_current", self.max_current),
+                        v_model=("max_current", self.simulator.max_current),
                         min=0.1,
                         max=5.0,
                         step=0.1,
@@ -307,7 +213,7 @@ class AntennaSimulation:
                     )
                     
                     vuetify.VSlider(
-                        v_model=("min_current", self.min_current),
+                        v_model=("min_current", self.simulator.min_current),
                         min=0.05,
                         max=2.0,
                         step=0.05,
@@ -318,7 +224,7 @@ class AntennaSimulation:
                     )
                     
                     vuetify.VSlider(
-                        v_model=("antenna_length", self.antenna_length),
+                        v_model=("antenna_length", self.simulator.antenna_length),
                         min=0.2,
                         max=2.0,
                         step=0.05,
@@ -353,11 +259,11 @@ class AntennaSimulation:
                     )
 
     def initialize_state(self):
-        self.state.antenna_length = self.antenna_length
-        self.state.min_current = self.min_current
-        self.state.max_current = self.max_current
-        self.state.frequency = self.frequency
-        self.state.freq_unit = self.freq_unit
+        self.state.antenna_length = self.simulator.antenna_length
+        self.state.min_current = self.simulator.min_current
+        self.state.max_current = self.simulator.max_current
+        self.state.frequency = self.simulator.frequency
+        self.state.freq_unit = self.simulator.freq_unit
 
     def start(self, show_server_only=False):
         try:

@@ -1,4 +1,4 @@
-from antenna_sim import AntennaSimulation
+from antenna_display import AntennaSimulation
 from trame.ui.vuetify import SinglePageWithDrawerLayout
 import sys
 
