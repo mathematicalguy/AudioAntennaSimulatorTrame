@@ -62,6 +62,9 @@ class AntennaSimulation:
         self.plotter.reset_camera()
 
     def update_scene(self, **kwargs):
+        # Only update if simulation has started
+        if not getattr(self.state, "simulation_started", False):
+            return
         # Update simulator parameters
         params = {
             'antenna_length': self.state.antenna_length,
@@ -96,8 +99,6 @@ class AntennaSimulation:
         def on_ready(ready=False, **kwargs):
             if ready:
                 self.update_scene()
-                self.ctrl.tick_period = 50
-                self.ctrl.tick = True
         
         @self.state.change("uploaded_file")
         def on_file_uploaded(uploaded_file=None, **kwargs):
@@ -105,53 +106,35 @@ class AntennaSimulation:
                 print(f"Processing audio file: {uploaded_file}")
                 self.process_audio_file(uploaded_file)
 
+        @self.ctrl.set("start_simulation")
+        def start_simulation():
+            self.state.simulation_started = True
+            self.ctrl.tick_period = 50
+            self.ctrl.tick = True
+            self.update_scene()  # Force immediate update so field lines appear right away
+
+        @self.state.change("simulation_started")
+        def on_simulation_started(simulation_started, **kwargs):
+            if simulation_started:
+                self.ctrl.tick = True
+            else:
+                self.ctrl.tick = False
+
         @self.ctrl.trigger("tick")
         def on_tick():
-            if self.ctrl.tick:
+            if getattr(self.state, "simulation_started", False):
                 self.update_scene()
-    
+
     def process_audio_file(self, file_path):
         """Process the uploaded audio file and update simulation parameters"""
         try:
-            import librosa
-            import numpy as np
-            
-            # Load the audio file
-            y, sr = librosa.load(file_path, sr=None)
-            
-            # Extract frequency information
-            D = np.abs(librosa.stft(y))
-            freqs = librosa.fft_frequencies(sr=sr)
-            times = librosa.times_like(D, sr=sr)
-            
-            # Find dominant frequency
-            dominant_freq_index = np.argmax(np.mean(D, axis=1))
-            dominant_freq = freqs[dominant_freq_index]
-            
-            # Scale to reasonable range for visualization
-            scaled_freq = min(1000, max(1, dominant_freq / 100))
-            
-            # Update simulation parameters based on audio
-            self.state.frequency = scaled_freq
-            
-            # Set appropriate frequency unit
-            if scaled_freq < 1:
-                self.state.freq_unit = 'Hz'
-            elif scaled_freq < 1000:
-                self.state.freq_unit = 'Hz'
-            else:
-                self.state.freq_unit = 'kHz'
-                self.state.frequency = scaled_freq / 1000
-                
-            # Store audio data for possible animation
-            self.audio_data = y
-            self.audio_sr = sr
-            
-            print(f"Audio processed: Dominant frequency = {dominant_freq} Hz")
-            
+            # Load the audio envelope for amplitude modulation
+            self.simulator.load_audio_envelope(file_path)
+            self.simulator.reset_audio_envelope()
+            print(f"Audio envelope loaded for AM from: {file_path}")
         except Exception as e:
-            print(f"Error processing audio file: {str(e)}")
-            self.state.upload_status = f"Error processing audio: {str(e)}"
+            print(f"Error processing audio file for AM: {str(e)}")
+            self.state.upload_status = f"Error processing audio for AM: {str(e)}"
 
     def setup_ui(self):
         with SinglePageLayout(self.server) as layout:
@@ -237,6 +220,15 @@ class AntennaSimulation:
                     # Add divider before audio upload section
                     vuetify.VDivider(classes="mb-4")
                     
+                    # Start Simulation button
+                    vuetify.VBtn(
+                        "Start Simulation",
+                        color="success",
+                        block=True,
+                        classes="mb-4",
+                        click=self.ctrl.start_simulation
+                    )
+                    
                     # Include audio uploader component directly in the layout
                     with self.audio_uploader.get_upload_widget():
                         pass
@@ -264,6 +256,7 @@ class AntennaSimulation:
         self.state.max_current = self.simulator.max_current
         self.state.frequency = self.simulator.frequency
         self.state.freq_unit = self.simulator.freq_unit
+        self.state.simulation_started = False
 
     def start(self, show_server_only=False):
         try:

@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista as pv
+import librosa
 
 class AntennaSimulator:
     def __init__(self):
@@ -34,6 +35,11 @@ class AntennaSimulator:
         self.field_data["E"] = self.vectors
         self.antenna_mesh = None
         self.update_antenna_mesh()
+
+        self.audio_envelope = None
+        self.audio_envelope_idx = 0
+        self.audio_envelope_len = 0
+        self.audio_envelope_repeat = True  # Loop envelope if simulation runs longer
 
     def generate_field_points(self):
         phi = np.linspace(0, 2*np.pi, 30)
@@ -70,7 +76,7 @@ class AntennaSimulator:
         body = pv.Cylinder(center=(0, 0, 0), direction=(0, 0, 1), radius=self.antenna_radius, height=length/2)
         base = pv.Cylinder(center=(0, 0, -length/20), direction=(0, 0, 1), radius=length/8, height=length/10)
         top = pv.Sphere(center=(0, 0, length/2), radius=self.antenna_radius*1.5)
-        ground = pv.Disc(center=(0, 0, -length/20), normal=(0, 0, 1), radius=length/4)
+        ground = pv.Disc(center=(0, 0, -length/20), normal=(0, 0, 1), inner=0, outer=length/4)
         return body + base + top + ground
 
     def _make_loop(self, length):
@@ -134,8 +140,7 @@ class AntennaSimulator:
         phase = 2 * np.pi * (actual_freq * self.t - distances / 2)
         
         # Calculate current amplitude based on min and max current
-        current_range = self.max_current - self.min_current
-        current = self.min_current + (current_range * abs(np.sin(2 * np.pi * actual_freq * self.t)))
+        current = self.get_current_amplitude()
         
         self.vectors[:, 0] = current * np.sin(phase) * self.field_points[:, 0] / distances
         self.vectors[:, 1] = current * np.sin(phase) * self.field_points[:, 1] / distances
@@ -144,3 +149,37 @@ class AntennaSimulator:
         intensities = np.linalg.norm(self.vectors, axis=1)
         self.field_data["E"] = self.vectors
         self.field_data["intensity"] = intensities
+
+    def load_audio_envelope(self, audio_path, envelope_hop=512):
+        """Load audio file and extract amplitude envelope to use for AM simulation."""
+        y, sr = librosa.load(audio_path, sr=None)
+        envelope = librosa.onset.onset_strength(y=y, sr=sr, hop_length=envelope_hop)
+        # Normalize envelope to [0, 1]
+        envelope = (envelope - envelope.min()) / (np.ptp(envelope) + 1e-8)
+        self.audio_envelope = envelope
+        self.audio_envelope_idx = 0
+        self.audio_envelope_len = len(envelope)
+
+    def get_current_amplitude(self):
+        if self.audio_envelope is not None and self.audio_envelope_len > 0:
+            idx = min(self.audio_envelope_idx, self.audio_envelope_len - 1)
+            amp = self.audio_envelope[idx]
+            # Scale amplitude to [min_current, max_current]
+            current = self.min_current + (self.max_current - self.min_current) * amp
+            # Advance envelope index for next time step
+            self.audio_envelope_idx += 1
+            if self.audio_envelope_idx >= self.audio_envelope_len:
+                if self.audio_envelope_repeat:
+                    self.audio_envelope_idx = 0
+                else:
+                    self.audio_envelope_idx = self.audio_envelope_len - 1
+            return current
+        else:
+            # Fallback to default AM if no audio
+            current_range = self.max_current - self.min_current
+            actual_freq = self.get_actual_frequency()
+            return self.min_current + (current_range * abs(np.sin(2 * np.pi * actual_freq * self.t)))
+
+    def reset_audio_envelope(self):
+        self.audio_envelope_idx = 0
+
